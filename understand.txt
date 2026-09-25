@@ -1,0 +1,175 @@
+                         ┌─────────────────────────────┐
+                         │        START PROGRAM        │
+                         └──────────────┬──────────────┘
+                                        │
+                                        ▼
+                    ┌────────────────────────────────────┐
+                    │ cmd/loadbalancer/main.go            │
+                    │                                    │
+                    │ main()                             │
+                    └────────────────┬───────────────────┘
+                                     │
+                 ┌───────────────────┼───────────────────┐
+                 │                   │                   │
+                 ▼                   ▼                   ▼
+        NewServer(:8081)    NewServer(:8082)    NewServer(:8083)
+                 │                   │                   │
+                 ▼                   ▼                   ▼
+        url.Parse()          url.Parse()          url.Parse()
+                 │                   │                   │
+                 ▼                   ▼                   ▼
+           Server object       Server object       Server object
+                 │                   │                   │
+                 └───────────────────┼───────────────────┘
+                                     │
+                                     ▼
+                         backendServers [] *Server
+                                     │
+                                     │
+                                     ▼
+                    ┌────────────────────────────┐
+                    │ NewRoundRobin()            │
+                    │                            │
+                    │ RoundRobin{current: 0}     │
+                    └─────────────┬──────────────┘
+                                  │
+                                  ▼
+                    ┌────────────────────────────┐
+                    │ NewLoadBalancer()          │
+                    │                            │
+                    │ LoadBalancer               │
+                    │ ├── Servers                │
+                    │ ├── Selector               │
+                    │ └── HealthChecker          │
+                    └─────────────┬──────────────┘
+                                  │
+                                  ▼
+                       NewHealthChecker()
+                                  │
+                                  ▼
+                         HealthChecker
+                                  │
+                                  ▼
+                         lb.Start(ctx)
+                                  │
+                    ┌─────────────┴──────────────┐
+                    │                            │
+                    ▼                            ▼
+          http.HandleFunc("/",       go HealthChecker.Start()
+              lb.handler)                       │
+                    │                           ▼
+                    │                    time.NewTicker()
+                    │                           │
+                    │                           ▼
+                    │                     checkAll()
+                    │                           │
+                    │                  ┌────────┼────────┐
+                    │                  ▼        ▼        ▼
+                    │               check()  check()  check()
+                    │                  │        │        │
+                    │                  ▼        ▼        ▼
+                    │              GET /health on each backend
+                    │                  │        │        │
+                    │                  ▼        ▼        ▼
+                    │            SetHealthy(true/false)
+                    │
+                    ▼
+              ListenAndServe(:8080)
+                    │
+                    │
+                    ▼
+              ┌──────────────┐
+              │    CLIENT    │
+              │              │
+              │ curl :8080   │
+              └──────┬───────┘
+                     │
+                     │ HTTP request
+                     ▼
+              lb.handler(w, r)
+                     │
+                     ▼
+              Selector.Next()
+                     │
+                     ▼
+              RoundRobin.Next()
+                     │
+              ┌──────┴───────┐
+              │              │
+              ▼              ▼
+       Server healthy?    Server unhealthy
+              │              │
+             YES             skip
+              │              │
+              └──────┬───────┘
+                     │
+                     ▼
+              Select backend
+                     │
+                     ▼
+       httputil.NewSingleHostReverseProxy()
+                     │
+                     ▼
+              proxy.ServeHTTP()
+                     │
+                     │ HTTP request
+                     ▼
+             ┌────────────────┐
+             │   BACKEND      │
+             │                │
+             │ :8081 / :8082  │
+             │      / :8083   │
+             └───────┬────────┘
+                     │
+                     ▼
+                 Response
+                     │
+                     ▼
+                   CLIENT
+
+
+
+
+
+
+
+
+
+
+
+Client
+  ↓
+:8080
+  ↓
+lb.handler()
+  ↓
+Selector.Next()
+  ↓
+RoundRobin.Next()
+  ↓
+Healthy backend
+  ↓
+ReverseProxy
+  ↓
+Backend :8081 / :8082 / :8083
+  ↓
+Response
+  ↓
+Client
+
+
+
+//paraalely this flow 
+
+
+HealthChecker.Start()
+        ↓
+     ticker
+        ↓
+    checkAll()
+        ↓
+ ┌──────┼──────┐
+ ↓      ↓      ↓
+S1     S2      S3
+ ↓      ↓      ↓
+/health /health /health
